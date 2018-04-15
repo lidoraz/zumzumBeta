@@ -30,10 +30,12 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.amazonaws.auth.CognitoCachingCredentialsProvider;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferListener;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferObserver;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferState;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferUtility;
+import com.amazonaws.regions.Regions;
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.mobile.client.AWSMobileClient;
 
@@ -73,9 +75,25 @@ public class MainActivity extends Activity {
 //                    AppLog.logString("handleMessage: toast - " +time);
 //                }
                 Bundle b = msg.getData();
-
-                Button button = findViewById(b.getInt("id"));
-                button.setText("Record\n\n\n"+b.getString("time"));
+                String type =b.getString("type");
+                if(type==null){
+                    throw new NullPointerException();
+                }
+                switch (type){
+                    case "button":{
+                        Button button = findViewById(b.getInt("id"));
+                        button.setText("Record\n\n\n"+b.getString("time"));
+                        break;
+                    }
+                    case "textview":{
+                        TextView tv = findViewById(b.getInt("id"));
+                        tv.setText(b.getString("text"));
+                        break;
+                    }
+                    default:{
+                        Log.d("Hmhandler","unknown type of msg, type is:'"+type+"'");
+                    }
+                }
 
             }
         };
@@ -142,12 +160,10 @@ public class MainActivity extends Activity {
     private void showRecordTimer(long[] timer,long startTime) {
         new Thread(()->{
             while(timer[0]!=0){
-                Message msg = new Message();
-                Bundle b = new Bundle();
-                b.putString("time",Long.toString((System.currentTimeMillis()-startTime)/1000));
-                b.putInt("id",R.id.record);
-                msg.setData(b);
-                mhandler.sendMessage(msg);
+                mhandler.sendMessage(Helper.msgCreator(
+                        "button",
+                        R.id.record,
+                        Long.toString((System.currentTimeMillis()-startTime)/1000)));
                 try {
                     Thread.sleep(1000);
                 } catch (InterruptedException e) {
@@ -177,7 +193,6 @@ public class MainActivity extends Activity {
         recorder.setOutputFile(getFilename());
         recorder.setOnErrorListener(errorListener);
         recorder.setOnInfoListener(infoListener);
-
         try {
             recorder.prepare();
             recorder.start();
@@ -207,32 +222,48 @@ public class MainActivity extends Activity {
             recorder.stop();
             recorder.reset();
             recorder.release();
-            AWSMobileClient.getInstance().initialize(this).execute();
+//            AWSMobileClient.getInstance().initialize(this).execute();
             uploadWithTransferUtility();
             recorder = null;
         }
     }
+    private static final String IDENTITY_POOL_ID = "eu-west-2:ef564bc8-7e01-430a-b8dd-97e359a9b84b";
     private void uploadWithTransferUtility(){
         TelephonyManager tManager = (TelephonyManager)getSystemService(Context.TELEPHONY_SERVICE);
         @SuppressLint("MissingPermission") String uuid = tManager.getDeviceId();
-        TransferUtility transferUtility =
-                TransferUtility.builder()
-                        .context(getApplicationContext())
-                        .awsConfiguration(AWSMobileClient.getInstance().getConfiguration())
-                        .s3Client(new AmazonS3Client(AWSMobileClient.getInstance().getCredentialsProvider()))
-                        .build();
+
+        CognitoCachingCredentialsProvider credentialsProvider = new CognitoCachingCredentialsProvider(
+                getApplicationContext(),
+                IDENTITY_POOL_ID,
+                Regions.EU_WEST_2);
+
+        AmazonS3Client s3Client = new AmazonS3Client(credentialsProvider);
+
+        TransferUtility transferUtility = new TransferUtility(s3Client,getApplicationContext());
+
+
+//        TransferUtility transferUtility =
+//                TransferUtility.builder()
+//                        .context(getApplicationContext())
+//                        .awsConfiguration(AWSMobileClient.getInstance().getConfiguration())
+//                        .s3Client(new AmazonS3Client(AWSMobileClient.getInstance().getCredentialsProvider()))
+//                        .build();
         TransferObserver uploadObserver =
 //                transferUtility.upload(
 //                        "s3Folder/s3Key.txt",
 //                        new File("/path/to/file/localFile.txt"));
-                transferUtility.upload("zumzum-beta",uuid+"_"+Long.toString(System.currentTimeMillis()),new File(getFilename()));
+                transferUtility.upload("zumzum-beta",uuid+"_"+Long.toString(System.currentTimeMillis())+AUDIO_RECORDER_FILE_EXT_MP4,new File(getFilename()));
 
         uploadObserver.setTransferListener(new TransferListener() {
 
             @Override
             public void onStateChanged(int id, TransferState state) {
                 if (TransferState.COMPLETED == state) {
-                    // Handle a completed upload.
+                    Log.d("uploadObserver","Upload Success!");
+                    mhandler.sendMessage(Helper.msgCreator(
+                            "textview",
+                            R.id.uploadStatus,
+                            "uploadSuccess!"));
                 }
             }
 
@@ -257,24 +288,24 @@ public class MainActivity extends Activity {
             // Handle a completed upload.
         }
         Log.d("uploadSerivce",uploadObserver.getState().toString());
-        while(uploadObserver.getState() ==TransferState.WAITING){
-            Log.d("upload service","in progress ........");
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-
-        }
-        while(uploadObserver.getState() ==TransferState.IN_PROGRESS){
-            Log.d("upload service","in progress ........");
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-
-        }
+//        while(uploadObserver.getState() ==TransferState.WAITING){
+//            Log.d("upload service","in progress ........");
+//            try {
+//                Thread.sleep(100);
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
+//
+//        }
+//        while(uploadObserver.getState() ==TransferState.IN_PROGRESS){
+//            Log.d("upload service","in progress ........");
+//            try {
+//                Thread.sleep(100);
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
+//
+//        }
         Log.d("YourActivity", "Bytes Transferrred: " + uploadObserver.getBytesTransferred());
         Log.d("YourActivity", "Bytes Total: " + uploadObserver.getBytesTotal());
     }
